@@ -15,7 +15,7 @@
 ```
 2 git init
 ```
-
+git commit -m
 生成'.git'隐藏文件夹，git的本地仓库
 
 ## 3 创建ReadMe额文件
