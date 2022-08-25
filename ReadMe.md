@@ -59,7 +59,7 @@ app.listen(3000,()=>{
 安装 nodemon工具
 
 ```
-npm install nodemon
+npm install nodemon -D
 ```
 
 编写``package.json``脚本
@@ -206,6 +206,365 @@ app.listen(APP_PORT,()=>{
     console.log(`server is running on http://localhost:${APP_PORT}`)
 }) 
 ```
+
+## 2 将路由和控制器
+
+路由：解析URL，分布给控制器对应的方法
+
+控制器：处理不同的业务
+
+改写``user.router.js``
+
+```
+const Router=require('@koa/router')
+
+const {register,login}=require('../controller/user.controller')
+
+const router=new Router({prefix:'/users'})
+
+//注册接口
+router.post('/register',register)
+
+//登录接口
+router.post('/login',login)
+
+module.exports=router
+```
+
+创建``controller/user.controller.js``
+
+```
+class UserController{
+    async register(ctx,next){
+        ctx.body='用户注册成功'
+    }
+    async login(ctx,next){
+        ctx.body='登录成功'
+    }
+}
+
+module.exports=new UserController()
+```
+
+# 六.解析body
+
+## 1 安装Koa- body
+
+```
+1 npm install Koa-body
+```
+
+## 2 注册中间件
+
+改写``app/index.js``
+
+![image-20220824100831642](C:\Users\Administrator\AppData\Roaming\Typora\typora-user-images\image-20220824100831642.png)
+
+## 3 解析请求数据
+
+改写``user.controller.js``文件
+
+```js
+const {createUser}=require('../service/user.service')
+
+class UserController{
+    async register(ctx,next){
+        //1.获取数据
+        // console.log(ctx.request.body)
+        const {user_name,password}=ctx.request.body
+        //2. 操作数据库
+         const res=await createUser(user_name,password)
+         console.log(res)
+        //3.返回结果
+        ctx.body=ctx.request.body
+        
+    }
+    async login(ctx,next){
+        
+        ctx.body='登录成功'
+    }
+}
+
+module.exports=new UserController()
+```
+
+## 4 拆分service层
+
+service层主要是做数据库处理
+
+创建``src/service/use.service.js``文件
+
+```
+class UserService{
+    async createUser(user_name,password){
+        //todo:写入数据库 
+        return '写入数据库成功'
+    }
+}
+
+module.exports=new UserService()
+```
+
+# 七.数据库操作
+
+sequeliz ORM数据库工具
+
+ORM:对象关系映射
+
+- 数据表映射(对应)一个类
+- 数据表中的数据行(记录)对应一个对象
+- 数据表字段对应对象的方法
+
+## 1 安装sequelize
+
+```
+1 npm install mysql2 sequelize
+```
+
+## 2 连接数据库
+
+``ser/db/seq.js``
+
+```
+const {Sequelize}=require('sequelize')
+
+const{MYSQL_HOST,MYSQL_PORT,MYSQL_USER,MYSQL_PWD,MYSQL_DB}=require('../config/config.default')
+const seq=new Sequelize(MYSQL_DB,MYSQL_USER,MYSQL_PWD,{
+    host:MYSQL_HOST,
+    dialect:'mysql'
+
+})
+
+
+seq.authenticate().then(()=>{
+    console.log('数据库连接成功')
+})
+.catch(err=>{
+ console.log('数据库连接失败',err)
+
+})
+
+module.exports=seq
+```
+
+## 3 编写配置文件
+
+```
+APP_PORT=8000
+
+MYSQL_HOST = localhost
+MYSQL_PORT=3006
+MYSQL_USER=root
+MYSQL_PWD=123456
+MYSQL_DB=my_zdsc
+
+```
+
+# 八.创建User模型
+
+## 1 拆分Model层
+
+sequrlize主要通过Model对应数据表
+
+创建``src/model/user.model对应数据表``
+
+```
+const {DataTypes}=require('sequelize')
+
+const seq=require('../db/seq')
+
+//创建模型(Model zd_user -> zd_users)
+const User=seq.define('zd_user',{
+    //id 会被sequelize自动创建,管理
+    user_name:{
+        type:DataTypes.STRING,
+        allowNull:false,
+        unique:true,
+        comment:'用户名,唯一',
+        
+    },
+    password:{
+        type:DataTypes.CHAR(64),
+        allowNull:false,
+        comment:'密码'
+    },
+    is_admin:{
+         type:DataTypes.BOOLEAN,
+         defaultValue:0,
+         comment:'是否为管理员,0:不是管理员(默认);1:是管理员'
+    }, 
+}
+// {
+//   timestamps:false
+// }
+)
+//强制同步数据库(创建数据表)
+// User.sync({force:true})//强制创建数据表,若已存在数据表,会删除数据表再创建新数据表
+
+module.exports=User
+```
+
+# 九.添加用户入库
+
+所有数据库的操作都在 Service 层完成, Service 调用 Model 完成数据库操作
+
+改写`src/service/user.service.js`
+
+```
+const User = require('../model/use.model')
+
+class UserService {
+  async createUser(user_name, password) {
+    // 插入数据
+    // User.create({
+    //   // 表的字段
+    //   user_name: user_name,
+    //   password: password
+    // })
+
+    // await表达式: promise对象的值
+    const res = await User.create({ user_name, password })
+    // console.log(res)
+
+    return res.dataValues
+  }
+}
+
+module.exports = new UserService()
+```
+
+同时, 改写`user.controller.js`
+
+```
+const { createUser } = require('../service/user.service')
+
+class UserController {
+  async register(ctx, next) {
+    // 1. 获取数据
+    // console.log(ctx.request.body)
+    const { user_name, password } = ctx.request.body
+    // 2. 操作数据库
+    const res = await createUser(user_name, password)
+    // console.log(res)
+    // 3. 返回结果
+    ctx.body = {
+      code: 0,
+      message: '用户注册成功',
+      result: {
+        id: res.id,
+        user_name: res.user_name,
+      },
+    }
+  }
+
+  async login(ctx, next) {
+    ctx.body = '登录成功'
+  }
+}
+
+module.exports = new UserController()
+```
+
+# 十.错误处理
+
+在控制器中, 对不同的错误进行处理, 返回不同的提示错误提示, 提高代码质量
+
+```
+const { createUser, getUerInfo } = require('../service/user.service')
+
+class UserController {
+  async register(ctx, next) {
+    // 1. 获取数据
+    // console.log(ctx.request.body)
+    const { user_name, password } = ctx.request.body
+
+    // 合法性
+    if (!user_name || !password) {
+      console.error('用户名或密码为空', ctx.request.body)
+      ctx.status = 400
+      ctx.body = {
+        code: '10001',
+        message: '用户名或密码为空',
+        result: '',
+      }
+      return
+    }
+    // 合理性
+    if (getUerInfo({ user_name })) {
+      ctx.status = 409
+      ctx.body = {
+        code: '10002',
+        message: '用户已经存在',
+        result: '',
+      }
+      return
+    }
+    // 2. 操作数据库
+    const res = await createUser(user_name, password)
+    // console.log(res)
+    // 3. 返回结果
+    ctx.body = {
+      code: 0,
+      message: '用户注册成功',
+      result: {
+        id: res.id,
+        user_name: res.user_name,
+      },
+    }
+  }
+
+  async login(ctx, next) {
+    ctx.body = '登录成功'
+  }
+}
+
+module.exports = new UserController()
+```
+
+在 service 中封装函数
+
+```
+const User = require('../model/use.model')
+
+class UserService {
+  async createUser(user_name, password) {
+    // 插入数据
+    // await表达式: promise对象的值
+    const res = await User.create({ user_name, password })
+    // console.log(res)
+
+    return res.dataValues
+  }
+
+  async getUerInfo({ id, user_name, password, is_admin }) {
+    const whereOpt = {}
+
+    id && Object.assign(whereOpt, { id })
+    user_name && Object.assign(whereOpt, { user_name })
+    password && Object.assign(whereOpt, { password })
+    is_admin && Object.assign(whereOpt, { is_admin })
+
+    const res = await User.findOne({
+      attributes: ['id', 'user_name', 'password', 'is_admin'],
+      where: whereOpt,
+    })
+
+    return res ? res.dataValues : null
+  }
+}
+
+module.exports = new UserService()
+```
+
+# 十一.拆分中间件
+
+为了使代码的逻辑更加清晰, 我们可以拆分一个中间件层, 封装多个中间件函数
+
+![img](https://camo.githubusercontent.com/c9c69e7a6c7a03c0a8b04971148c33c3363ec421f9cacbbcaef0c1cf3e0a221a/687474703a2f2f696d6167652e62726f6a69652e636e2f696d6167652d32303231303532343135343335333532302e706e67)
+
+
+
+
 
 
 
