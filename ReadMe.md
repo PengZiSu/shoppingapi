@@ -562,11 +562,391 @@ module.exports = new UserService()
 
 ![img](https://camo.githubusercontent.com/c9c69e7a6c7a03c0a8b04971148c33c3363ec421f9cacbbcaef0c1cf3e0a221a/687474703a2f2f696d6167652e62726f6a69652e636e2f696d6167652d32303231303532343135343335333532302e706e67)
 
+## 1 拆分中间件
 
+添加`src/middleware/user.middleware.js`
 
+```
+const { getUerInfo } = require('../service/user.service')
+const { userFormateError, userAlreadyExited } = require('../constant/err.type')
 
+const userValidator = async (ctx, next) => {
+  const { user_name, password } = ctx.request.body
+  // 合法性
+  if (!user_name || !password) {
+    console.error('用户名或密码为空', ctx.request.body)
+    ctx.app.emit('error', userFormateError, ctx)
+    return
+  }
 
+  await next()
+}
 
+const verifyUser = async (ctx, next) => {
+  const { user_name } = ctx.request.body
+
+  if (getUerInfo({ user_name })) {
+    ctx.app.emit('error', userAlreadyExited, ctx)
+    return
+  }
+
+  await next()
+}
+
+module.exports = {
+  userValidator,
+  verifyUser,
+}
+```
+
+## 2 统一错误处理
+
+- 在出错的地方使用`ctx.app.emit`提交错误
+- 在 app 中通过`app.on`监听
+
+编写统一的错误定义文件
+
+```
+module.exports = {
+  userFormateError: {
+    code: '10001',
+    message: '用户名或密码为空',
+    result: '',
+  },
+  userAlreadyExited: {
+    code: '10002',
+    message: '用户已经存在',
+    result: '',
+  },
+}
+```
+
+## 3 错误处理函数
+
+```
+module.exports = (err, ctx) => {
+  let status = 500
+  switch (err.code) {
+    case '10001':
+      status = 400
+      break
+    case '10002':
+      status = 409
+      break
+    default:
+      status = 500
+  }
+  ctx.status = status
+  ctx.body = err
+}
+```
+
+改写`app/index.js`
+
+```
+const errHandler = require('./errHandler')
+// 统一的错误处理
+app.on('error', errHandler)
+```
+
+# 十二.加密
+
+在将密码保存到数据库之前，要对密码进行加密处理
+
+## 1 安装bcryptjs
+
+```
+1 npm install bcryptjs
+```
+
+## 2 编写加密中间件
+
+```
+const crpytPassword = async (ctx, next) => {
+  const { password } = ctx.request.body
+
+  const salt = bcrypt.genSaltSync(10)
+  // hash保存的是 密文
+  const hash = bcrypt.hashSync(password, salt)
+
+  ctx.request.body.password = hash
+
+  await next()
+}
+```
+
+## 3 在 router 中使用
+
+改写`user.router.js`
+
+```
+const Router = require('koa-router')
+
+const {
+  userValidator,
+  verifyUser,
+  crpytPassword,
+} = require('../middleware/user.middleware')
+const { register, login } = require('../controller/user.controller')
+
+const router = new Router({ prefix: '/users' })
+
+// 注册接口
+router.post('/register', userValidator, verifyUser, crpytPassword, register)
+
+// 登录接口
+router.post('/login', login)
+
+module.exports = router
+```
+
+# 十三. 登录验证
+
+流程:
+
+- 验证格式
+- 验证用户是否存在
+- 验证密码是否匹配
+
+改写`src/middleware/user.middleware.js`
+
+```
+const bcrypt = require('bcryptjs')
+
+const { getUerInfo } = require('../service/user.service')
+const {
+  userFormateError,
+  userAlreadyExited,
+  userRegisterError,
+  userDoesNotExist,
+  userLoginError,
+  invalidPassword,
+} = require('../constant/err.type')
+
+const userValidator = async (ctx, next) => {
+  const { user_name, password } = ctx.request.body
+  // 合法性
+  if (!user_name || !password) {
+    console.error('用户名或密码为空', ctx.request.body)
+    ctx.app.emit('error', userFormateError, ctx)
+    return
+  }
+
+  await next()
+}
+
+const verifyUser = async (ctx, next) => {
+  const { user_name } = ctx.request.body
+
+  // if (await getUerInfo({ user_name })) {
+  //   ctx.app.emit('error', userAlreadyExited, ctx)
+  //   return
+  // }
+  try {
+    const res = await getUerInfo({ user_name })
+
+    if (res) {
+      console.error('用户名已经存在', { user_name })
+      ctx.app.emit('error', userAlreadyExited, ctx)
+      return
+    }
+  } catch (err) {
+    console.error('获取用户信息错误', err)
+    ctx.app.emit('error', userRegisterError, ctx)
+    return
+  }
+
+  await next()
+}
+
+const crpytPassword = async (ctx, next) => {
+  const { password } = ctx.request.body
+
+  const salt = bcrypt.genSaltSync(10)
+  // hash保存的是 密文
+  const hash = bcrypt.hashSync(password, salt)
+
+  ctx.request.body.password = hash
+
+  await next()
+}
+
+const verifyLogin = async (ctx, next) => {
+  // 1. 判断用户是否存在(不存在:报错)
+  const { user_name, password } = ctx.request.body
+
+  try {
+    const res = await getUerInfo({ user_name })
+
+    if (!res) {
+      console.error('用户名不存在', { user_name })
+      ctx.app.emit('error', userDoesNotExist, ctx)
+      return
+    }
+
+    // 2. 密码是否匹配(不匹配: 报错)
+    if (!bcrypt.compareSync(password, res.password)) {
+      ctx.app.emit('error', invalidPassword, ctx)
+      return
+    }
+  } catch (err) {
+    console.error(err)
+    return ctx.app.emit('error', userLoginError, ctx)
+  }
+
+  await next()
+}
+
+module.exports = {
+  userValidator,
+  verifyUser,
+  crpytPassword,
+  verifyLogin,
+}
+```
+
+定义错误类型
+
+```
+module.exports = {
+  userFormateError: {
+    code: '10001',
+    message: '用户名或密码为空',
+    result: '',
+  },
+  userAlreadyExited: {
+    code: '10002',
+    message: '用户已经存在',
+    result: '',
+  },
+  userRegisterError: {
+    code: '10003',
+    message: '用户注册错误',
+    result: '',
+  },
+  userDoesNotExist: {
+    code: '10004',
+    message: '用户不存在',
+    result: '',
+  },
+  userLoginError: {
+    code: '10005',
+    message: '用户登录失败',
+    result: '',
+  },
+  invalidPassword: {
+    code: '10006',
+    message: '密码不匹配',
+    result: '',
+  },
+}
+```
+
+改写路由
+
+```
+// 登录接口
+router.post('/login', userValidator, verifyLogin, login)
+```
+
+# 十四.用户的认证与授权
+
+登录成功后,给用户颁发一个令牌token,用户在以后的每一个请求中携带这个令牌。
+
+jwt:josnwebtoken
+
+- header：头部
+- payload:载荷
+- signature:签名
+
+## 1 颁发 token
+
+### 1 安装jsonwebtoken
+
+```
+1 npm install jsonwebtoken
+```
+
+### 2 在控制器中改写 login 方法
+
+```
+async login(ctx, next) {
+  const { user_name } = ctx.request.body
+
+  // 1. 获取用户信息(在token的payload中, 记录id, user_name, is_admin)
+  try {
+    // 从返回结果对象中剔除password属性, 将剩下的属性放到res对象
+    const { password, ...res } = await getUerInfo({ user_name })
+
+    ctx.body = {
+      code: 0,
+      message: '用户登录成功',
+      result: {
+        token: jwt.sign(res, JWT_SECRET, { expiresIn: '1d' }),
+      },
+    }
+  } catch (err) {
+    console.error('用户登录失败', err)
+  }
+}
+```
+
+### 3 定义私钥
+
+在`.env`定义
+
+```
+JWT_SECRET = xzd
+```
+
+## 2 用户认证
+
+### 创建 auth 中间件
+
+```
+const jwt = require('jsonwebtoken')
+
+const { JWT_SECRET } = require('../config/config.default')
+
+const { tokenExpiredError, invalidToken } = require('../constant/err.type')
+
+const auth = async (ctx, next) => {
+  const { authorization } = ctx.request.header
+  const token = authorization.replace('Bearer ', '')
+  console.log(token)
+
+  try {
+    // user中包含了payload的信息(id, user_name, is_admin)
+    const user = jwt.verify(token, JWT_SECRET)
+    ctx.state.user = user
+  } catch (err) {
+    switch (err.name) {
+      case 'TokenExpiredError':
+        console.error('token已过期', err)
+        return ctx.app.emit('error', tokenExpiredError, ctx)
+      case 'JsonWebTokenError':
+        console.error('无效的token', err)
+        return ctx.app.emit('error', invalidToken, ctx)
+    }
+  }
+
+  await next()
+}
+
+module.exports = {
+  auth,
+}
+```
+
+### 2 改写 router
+
+```
+// 修改密码接口
+router.patch('/', auth, (ctx, next) => {
+  console.log(ctx.state.user)
+  ctx.body = '修改密码成功'
+})
+```
 
 
 

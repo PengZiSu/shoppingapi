@@ -12,4 +12,5 @@ switch(err.code){
 }
 ctx.status=status
 ctx.body=err
+console.log(err)
 }
